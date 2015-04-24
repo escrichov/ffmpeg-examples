@@ -567,7 +567,10 @@ int main(int argc, char **argv)
 
     /* Initialize libavcodec, and register all codecs and formats. */
     av_register_all();
+
+    /* Initialize network formats */
     avformat_network_init();
+
     if (argc < 2) {
         printf("usage: %s output_file\n"
                "API example program to output a media file with libavformat.\n"

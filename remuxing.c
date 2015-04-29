@@ -31,41 +31,7 @@
 #include <libavutil/timestamp.h>
 #include <libavformat/avformat.h>
 
-
-void log_video_buffer(const unsigned char *buffer, int buffer_length, int keyframe, int frame)
-{
-    int i, limit;
-    int print_bytes = 30;
-    int nal_unit_type = -1;
-
-    fprintf(stderr, "Buffer: ");
-
-    if (buffer_length < print_bytes)
-    {
-        limit = buffer_length;
-    }
-    else
-    {
-        limit = print_bytes;
-    }
-
-    for (i=0; i < limit ; i++)
-    {
-        fprintf(stderr, "%02x", buffer[i]);
-    }
-
-    for (i; i < print_bytes; i++)
-    {
-        fprintf(stderr, "00");
-    }
-
-    if (buffer_length >= 5)
-    {
-        nal_unit_type = buffer[4] & 0x1f;
-    }
-
-    fprintf(stderr, "\tBuffer length: %d\tKeyframe: %d\tNal Unit type: %d\tFrame: %d\n", buffer_length, keyframe, nal_unit_type, frame);
-}
+#define VIDEO_FRAME_RATE 30
 
 static void log_packet(const AVFormatContext *fmt_ctx, const AVPacket *pkt, const char *tag)
 {
@@ -77,6 +43,12 @@ static void log_packet(const AVFormatContext *fmt_ctx, const AVPacket *pkt, cons
            av_ts2str(pkt->dts), av_ts2timestr(pkt->dts, time_base),
            av_ts2str(pkt->duration), av_ts2timestr(pkt->duration, time_base),
            pkt->stream_index);
+}
+
+int nextPts()
+{
+    static int64_t static_pts = 0;
+    return static_pts++;
 }
 
 int main(int argc, char **argv)
@@ -99,6 +71,7 @@ int main(int argc, char **argv)
     out_filename = argv[2];
 
     av_register_all();
+    avformat_network_init();
 
     if ((ret = avformat_open_input(&ifmt_ctx, in_filename, 0, 0)) < 0) {
         fprintf(stderr, "Could not open input file '%s'", in_filename);
@@ -122,6 +95,7 @@ int main(int argc, char **argv)
     ofmt = ofmt_ctx->oformat;
 
     for (i = 0; i < ifmt_ctx->nb_streams; i++) {
+        AVRational fps;
         AVStream *in_stream = ifmt_ctx->streams[i];
         AVStream *out_stream = avformat_new_stream(ofmt_ctx, in_stream->codec->codec);
         if (!out_stream) {
@@ -138,7 +112,17 @@ int main(int argc, char **argv)
         out_stream->codec->codec_tag = 0;
         if (ofmt_ctx->oformat->flags & AVFMT_GLOBALHEADER)
             out_stream->codec->flags |= CODEC_FLAG_GLOBAL_HEADER;
+
+        fps = (AVRational) {1, VIDEO_FRAME_RATE};
+        out_stream->sample_aspect_ratio = in_stream->sample_aspect_ratio;
+        out_stream->time_base = fps;
+        out_stream->r_frame_rate = fps;
+        out_stream->avg_frame_rate = fps;
+        out_stream->codec->time_base = fps;
+        fprintf(stderr, "Timebase Codec: %d/%d, Timebase stream: %d/%d\n", out_stream->codec->time_base.num, out_stream->codec->time_base.den, out_stream->time_base.num, out_stream->time_base.den);
+        fprintf(stderr, "Framerate: %d/%d, Ticks per frame: %d\n", in_stream->r_frame_rate.num, in_stream->r_frame_rate.den, in_stream->codec->ticks_per_frame);
     }
+
     av_dump_format(ofmt_ctx, 0, out_filename, 1);
 
     if (!(ofmt->flags & AVFMT_NOFILE)) {
@@ -165,23 +149,14 @@ int main(int argc, char **argv)
         in_stream  = ifmt_ctx->streams[pkt.stream_index];
         out_stream = ofmt_ctx->streams[pkt.stream_index];
 
-        //log_packet(ifmt_ctx, &pkt, "in");
-        
+        log_packet(ifmt_ctx, &pkt, "in");
 
         /* copy packet */
-        pkt.pts = av_rescale_q_rnd(pkt.pts, in_stream->time_base, out_stream->time_base, AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX);
-        pkt.dts = av_rescale_q_rnd(pkt.dts, in_stream->time_base, out_stream->time_base, AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX);
-        pkt.duration = av_rescale_q(pkt.duration, in_stream->time_base, out_stream->time_base);
+        pkt.pts = pkt.dts = nextPts();
+        av_packet_rescale_ts(&pkt, out_stream->codec->time_base, out_stream->time_base);
+        pkt.duration = 0;
         pkt.pos = -1;
-        //log_packet(ofmt_ctx, &pkt, "out");
-        if (pkt.flags & AV_PKT_FLAG_KEY)
-	{
-            log_video_buffer(pkt.data, pkt.size, 1, pkt.dts);
-        }
-	else
-	{
-	    log_video_buffer(pkt.data, pkt.size, 0, pkt.dts);
-	}
+        log_packet(ofmt_ctx, &pkt, "out");
 
         ret = av_interleaved_write_frame(ofmt_ctx, &pkt);
         if (ret < 0) {

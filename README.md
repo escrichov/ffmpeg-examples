@@ -1,4 +1,4 @@
-# ffmpeg-examples
+# ffmpeg examples
 
 Examples in C of FFMPEG
 

@@ -1,5 +1,7 @@
 # ffmpeg-examples
 
+Examples in C of FFMPEG
+
 ## List of examples
 
 * decoding encoding
